@@ -6,9 +6,9 @@ This trains a local HF causal LM to map:
 
 Usage (example):
 
-  python -m deep_research_agent.training.train_lora_writer \\
-    --model meta-llama/Meta-Llama-3-8B-Instruct \\
-    --train_jsonl path/to/writer_train.jsonl \\
+  python -m deep_research_agent.training.train_lora_writer \
+    --model meta-llama/Meta-Llama-3-8B-Instruct \
+    --train_jsonl path/to/writer_train.jsonl \
     --output_dir path/to/lora_writer
 
 After training, set in `LLMConfig`:
@@ -26,12 +26,14 @@ from typing import List
 import json
 
 from datasets import load_dataset
+# Added DataCollatorForLanguageModeling to handle variable sequence lengths
 from peft import LoraConfig, get_peft_model
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     Trainer,
     TrainingArguments,
+    DataCollatorForLanguageModeling,
 )
 
 
@@ -63,6 +65,7 @@ def make_supervised_examples(example, tokenizer, max_length: int):
         text,
         truncation=True,
         max_length=max_length,
+        padding=False,  # Let the collator handle padding
     )
     tokenized["labels"] = tokenized["input_ids"].copy()
     return tokenized
@@ -72,24 +75,18 @@ def train_lora_writer(cfg: TrainConfig) -> None:
     import torch
     
     tokenizer = AutoTokenizer.from_pretrained(cfg.model_name_or_path)
+    # Ensure a padding token is defined for the collator
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Determine device: use MPS for Mac, CUDA if available, else CPU
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        device_map = "mps"
-    elif torch.cuda.is_available():
-        device_map = "auto"
-    else:
-        device_map = "cpu"
-    
-    print(f"Using device: {device_map}")
+    print(f"Loading model: {cfg.model_name_or_path}")
     
     base_model = AutoModelForCausalLM.from_pretrained(
         cfg.model_name_or_path,
-        device_map=device_map,
-        torch_dtype=torch.float16 if device_map != "cpu" else torch.float32,
     )
+    
+    # Enable gradient checkpointing to save memory
+    base_model.gradient_checkpointing_enable()
 
     # Configure LoRA
     lora_cfg = LoraConfig(
@@ -112,18 +109,31 @@ def train_lora_writer(cfg: TrainConfig) -> None:
         per_device_train_batch_size=cfg.batch_size,
         num_train_epochs=cfg.num_epochs,
         learning_rate=cfg.lr,
-        logging_steps=10,
+        logging_steps=1,
         save_steps=500,
         save_total_limit=2,
         bf16=False,
-        fp16=(device_map != "cpu"),  # Only use fp16 on GPU/MPS
+        fp16=False,  # Disable fp16 on CPU/MPS
         report_to=[],
+        remove_unused_columns=False,  # Important for PEFT
+        dataloader_pin_memory=False,  # Disable pin_memory on CPU/MPS
+        gradient_accumulation_steps=1,
+        max_steps=10,  # Limit steps for testing
+    )
+
+    # Initialize data collator for causal language modeling with padding
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer, 
+        mlm=False,
+        pad_to_multiple_of=None,  # Pad to max length in batch
     )
 
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=tokenized,
+        data_collator=data_collator, # Apply padding to avoid ValueError
+        processing_class=tokenizer,
     )
     trainer.train()
 
@@ -156,4 +166,3 @@ if __name__ == "__main__":
     )
     train_lora_writer(cfg)
     print(f"Saved LoRA writer adapter to {cfg.output_dir}")
-
