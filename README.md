@@ -15,7 +15,7 @@ Output is **Markdown with inline citations and references**, suitable for the [D
 ## Setup
 ```bash
 # From repo root (GenAI)
-cd /path/to/GenAI
+cd /path/to/project
 python -m venv .venv
 source .venv/bin/activate   # or .venv\Scripts\activate on Windows
 pip install -r deep_research_agent/requirements.txt
@@ -24,7 +24,8 @@ pip install -r deep_research_agent/requirements.txt
 ### Environment (OpenAI or local HF)
 
 Create a `.env` in `GenAI` or `deep_research_agent`:
-
+- **Groq backend** (Optimized for Agentic loops):
+  - `GROQ_API_KEY=gsk_...`
 - **OpenAI backend** (`backend="openai"` in `LLMConfig`):
   - `OPENAI_API_KEY=sk-...`
   - optional: `OPENAI_BASE_URL` for OpenAI-compatible endpoints (e.g. Ollama).

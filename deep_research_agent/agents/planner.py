@@ -4,13 +4,9 @@ from typing import Any
 
 from deep_research_agent.llm import invoke
 
-
-SYSTEM = """You are a research planner for scientific literature synthesis. Given a main research query (e.g. a "related work" style question), output a JSON object with:
-- "sub_questions": list of 3-6 focused sub-questions that cover the main query (each answerable with papers).
-- "search_queries": list of 4-8 search query strings to use for arXiv and Semantic Scholar (concise, keyword-rich).
-- "strategy": one short paragraph describing the research strategy.
-
-Output only valid JSON, no markdown or extra text."""
+SYSTEM = """...
+Limit your research plan to a maximum of 3 highly targeted search queries to ensure efficiency.
+..."""
 
 
 def plan_research(query: str) -> dict[str, Any]:

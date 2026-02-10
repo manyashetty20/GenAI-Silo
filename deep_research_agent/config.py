@@ -10,25 +10,25 @@ except ImportError:
     pass
 
 
+# deep_research_agent/config.py
+
 @dataclass
 class LLMConfig:
-    """LLM endpoint and model settings.
-
-    backend:
-      - "openai": use OpenAI-compatible API via langchain_openai.ChatOpenAI
-      - "hf_local": use a local Hugging Face model (optionally with LoRA)
-    """
-
-    backend = "hf_local"
-    model: str = "gpt-4o-mini"  # for backend=="openai", this is the OpenAI model name
-    temperature: float = 0.3
-    max_tokens: int = 8192
-    api_key: Optional[str] = field(default_factory=lambda: os.getenv("OPENAI_API_KEY"))
-    base_url: Optional[str] = field(default_factory=lambda: os.getenv("OPENAI_BASE_URL"))  # e.g. http://localhost:11434/v1 for Ollama
-
-    # For backend == "hf_local"
-    hf_model_name_or_path = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    hf_lora_path = "lora_writer_tinyllama"
+    # 1. Change backend to "openai"
+    backend: str = "openai" 
+    
+    # 2. Use Llama 3.3 70B for journal-quality reasoning
+    model: str = "llama-3.3-70b-versatile" 
+    
+    # 3. Set the Groq Base URL
+    base_url: str = "https://api.groq.com/openai/v1"
+    
+    # 4. Point to the API key in your .env
+    api_key: Optional[str] = field(default_factory=lambda: os.getenv("GROQ_API_KEY"))
+    
+    # 5. Optional: Keep temperature low for academic synthesis
+    temperature: float = 0.1
+    max_tokens: int = 4096
 
 @dataclass
 class EmbeddingConfig:
@@ -38,13 +38,16 @@ class EmbeddingConfig:
     device: str = "cpu"
 
 
+# deep_research_agent/config.py
+
 @dataclass
 class RetrievalConfig:
     """Retrieval limits and sources."""
-    max_arxiv_results: int = 30
-    max_semantic_scholar_results: int = 20
-    top_k_after_rerank: int = 15
-    end_date: Optional[str] = None  # YYYY-MM-DD for reproducibility
+    max_arxiv_results: int = 15
+    max_semantic_scholar_results: int = 10
+    top_k_after_rerank: int = 10
+    # Add this line to fix the AttributeError
+    end_date: Optional[str] = None  # Format: YYYY-MM-DD
 
 
 @dataclass
