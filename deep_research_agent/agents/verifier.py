@@ -6,15 +6,10 @@ from typing import Any
 from deep_research_agent.llm import invoke
 
 
-SYSTEM = """You are a verifier for a research synthesis. Given a report and the list of papers (with id, title, summary), you check:
-1. Does each inline citation [1], [2], etc. refer to a real reference in the References section?
-2. Is each cited claim actually supported by the cited paper's content?
-Output a JSON object:
-- "valid": true if the report is fully correct, false otherwise
-- "issues": list of strings describing each problem (e.g. "Claim X cites [3] but paper 3 does not support it")
-- "corrected_report": if there are issues, a corrected version of the report (same structure, fix citations/claims); if valid, the same report as input.
-Output only valid JSON."""
-
+SYSTEM = """...
+- "corrected_report": if there are issues, a corrected version of the report. 
+IMPORTANT: You MUST include the "## References" section and the full reference list at the end of the corrected_report exactly as it appeared in the input.
+..."""
 
 def verify_citations(
     report: str,
