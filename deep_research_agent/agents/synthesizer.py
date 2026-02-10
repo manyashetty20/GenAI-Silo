@@ -1,14 +1,15 @@
-"""Synthesizer / Writer Agent: produces a structured, cited scientific answer (DeepScholar-style)."""
+"""Synthesizer / Writer Agent: produces a structured, cited scientific answer."""
 from typing import Any
 from deep_research_agent.llm import invoke
 
-# Updated System Prompt to emphasize verifiability
+# Updated System Prompt for Benchmark Parsing
 SYSTEM = """You write a highly technical "Related Work" section in Markdown. 
 Rules:
-- Focus on specific metrics, SNR gains, and architectural comparisons.
+- You MUST start the response with the header "# Related Work".
+- Use double newlines (\\n\\n) between every single paragraph.
 - Every factual claim must be followed by an inline citation like [1] or [2].
-- Use only information from the provided nuggets; do not speculate.
-- DO NOT generate the References section; just write the body text. I will append the list."""
+- Focus on specific metrics, SNR gains, and architectural comparisons.
+- DO NOT generate the References section; just write the body text."""
 
 def synthesize_report(
     query: str,
@@ -17,29 +18,21 @@ def synthesize_report(
     nuggets_by_paper: list[dict],
     max_tokens: int = 8192,
 ) -> str:
-    """
-    Produce final Markdown report with accurate metadata and inline citations.
-    """
     ref_map = {p.get("id"): p for p in papers}
     nugget_map = {n.get("id"): n.get("nuggets", []) for n in nuggets_by_paper if n.get("id")}
 
-    # 1. Build the REAL reference block that will be appended at the end
+    # 1. Build Reference Block
     ref_lines = []
     for i, p in enumerate(papers, 1):
-        pid = p.get("id", "")
-        # Get actual metadata from the paper object
         authors_list = p.get("authors", [])
-        authors = ", ".join(authors_list[:3])
-        if len(authors_list) > 3:
-            authors += " et al."
-        
+        authors = ", ".join(authors_list[:3]) + (" et al." if len(authors_list) > 3 else "")
         title = p.get("title", "Unknown Title")
-        url = p.get("url", f"arXiv:{p.get('arxiv_id', 'N/A')}")
+        url = p.get("url", "N/A")
         ref_lines.append(f"[{i}] {authors}. {title}. {url}")
     
     formatted_references = "\n\n## References\n" + "\n".join(ref_lines)
 
-    # 2. Build the Nugget text for the LLM to reason over
+    # 2. Build Nugget text for LLM
     nugget_text = []
     for pid, nuggets in nugget_map.items():
         idx = next((i for i, x in enumerate(papers, 1) if x.get("id") == pid), None)
@@ -50,12 +43,12 @@ def synthesize_report(
     prompt = f"""Research query: {query}
 Strategy: {plan.get('strategy', '')}
 
-Nuggets (Each claim includes its citation index):
+Nuggets:
 {chr(10).join(nugget_text)}
 
-Write only the technical synthesis. Use the indices provided in the nuggets (e.g., [1]) for your citations."""
+Write the technical synthesis. Use the indices provided (e.g., [1])."""
 
-    # 3. Get the synthesis and append the GUARANTEED accurate references
+    # 3. Assemble with mandatory double newline
     report_body = invoke(prompt, system=SYSTEM, temperature=0.2, max_tokens=max_tokens)
     
-    return report_body + formatted_references
+    return report_body + "\n\n" + formatted_references

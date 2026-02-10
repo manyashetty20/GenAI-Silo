@@ -12,7 +12,6 @@ from deep_research_agent.agents import (
 )
 from deep_research_agent.config import get_config
 
-
 def generate_reference_block(papers: list[dict]) -> str:
     """Helper to ensure references are consistently formatted and appended."""
     ref_lines = []
@@ -26,21 +25,20 @@ def generate_reference_block(papers: list[dict]) -> str:
         ref_lines.append(f"[{i}] {authors}. {title}. {url}")
     return "\n\n## References\n" + "\n".join(ref_lines)
 
-
 def run_research(
     query: str,
     end_date: str | None = None,
 ) -> tuple[str, list[dict], dict[str, Any]]:
     """
     Run a Plan → Execute → Verify pipeline.
-    Ensures metadata integrity for the DeepScholar Benchmark.
+    Optimized for DeepScholar verifiability and nugget coverage.
     """
     cfg = get_config().agent
 
-    # 1. Plan
+    # 1. Plan: Decompose query into sub-questions
     plan = plan_research(query)
 
-    # 2. Execute (search + nuggets + first report)
+    # 2. Execute: Recursive search and nugget extraction
     papers = search_agent(
         plan.get("search_queries", [query]),
         main_query=query,
@@ -48,14 +46,14 @@ def run_research(
     )
     
     if not papers:
-        return "No relevant papers found for the given query.", [], {"verified": False, "num_papers": 0}
+        return "No relevant papers found.", [], {"verified": False, "num_papers": 0}
 
     nuggets = extract_nuggets(papers)
     
-    # Generate initial report (Synthesizer appends references internally)
+    # Generate initial synthesis (Synthesizer now focused on body text)
     report = synthesize_report(query, plan, papers, nuggets)
 
-    # 3. Verify loop
+    # 3. Verify loop: Audit claim-citation pairs
     verified = False
     verify_result: dict[str, Any] | None = None
     iteration = 0
@@ -63,16 +61,14 @@ def run_research(
     while iteration < cfg.max_verify_iterations:
         iteration += 1
         
-        # Verify the current version of the report
+        # Verify current report against nuggets
         verify_result = verify_citations(report, papers)
         verified = bool(verify_result.get("valid", False))
         
-        # Update the report with the verifier's corrections
+        # Update report with corrections
         report = verify_result.get("corrected_report", report)
         
-        # CRITICAL FIX: Ensure ## References exists in the report after verification.
-        # If the verifier's LLM omitted the references in its corrected_report,
-        # we programmatically re-attach the guaranteed metadata.
+        # FORCE: Ensure references are attached even if the Verifier LLM omits them
         if "## References" not in report:
             report += generate_reference_block(papers)
             
@@ -85,5 +81,4 @@ def run_research(
         "num_papers": len(papers),
         "iterations": iteration,
     }
-    
     return report, papers, stats
