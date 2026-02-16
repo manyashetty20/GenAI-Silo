@@ -12,21 +12,20 @@ except ImportError:
 
 # deep_research_agent/config.py
 
+
 @dataclass
 class LLMConfig:
-    # 1. Change backend to "openai"
     backend: str = "openai" 
     
-    # 2. Use Llama 3.3 70B for journal-quality reasoning
-    model: str = "llama-3.3-70b-versatile" 
+    # Switch to Qwen 2.5 72B - it's excellent for research and highly available
+    model: str = "Qwen/Qwen2.5-72B-Instruct" 
     
-    # 3. Set the Groq Base URL
-    base_url: str = "https://api.groq.com/openai/v1"
+    base_url: str = "https://router.huggingface.co/v1"
     
-    # 4. Point to the API key in your .env
-    api_key: Optional[str] = field(default_factory=lambda: os.getenv("GROQ_API_KEY"))
+    api_key: Optional[str] = field(
+        default_factory=lambda: os.getenv("HF_TOKEN")
+    )
     
-    # 5. Optional: Keep temperature low for academic synthesis
     temperature: float = 0.1
     max_tokens: int = 4096
 
