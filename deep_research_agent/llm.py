@@ -113,3 +113,14 @@ def invoke(
         return text.strip()
 
     raise RuntimeError(f"Unknown LLM backend: {cfg.backend!r}")
+
+class LLMWrapper:
+    """Simple wrapper so other modules can call llm.invoke()."""
+
+    def invoke(self, prompt: str, system: Optional[str] = None) -> str:
+        return invoke(prompt=prompt, system=system)
+
+
+def get_llm() -> LLMWrapper:
+    """Return an object with an invoke() method."""
+    return LLMWrapper()

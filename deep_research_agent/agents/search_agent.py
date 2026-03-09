@@ -1,67 +1,197 @@
-"""Search Agent: performs recursive, adaptive literature search using plan's queries."""
-from typing import Optional, Any
-import time
+from typing import List, Dict, Optional, Any
+import concurrent.futures
+from tavily import TavilyClient
 
 from deep_research_agent.config import get_config
-from deep_research_agent.retrieval import search_arxiv, search_semantic_scholar, rerank
+from deep_research_agent.retrieval import (
+    search_arxiv,
+    search_semantic_scholar,
+    rerank
+)
 
-# Simple global cache to prevent redundant API calls during the same run
-_SEARCH_CACHE: dict[str, list[dict]] = {}
+_SEARCH_CACHE = {}
+
+# ------------------------------------------------
+# KEYWORDS used for topic filtering
+# ------------------------------------------------
+
+RAG_KEYWORDS = [
+    "retrieval",
+    "retrieval augmented",
+    "rag",
+    "retriever",
+    "knowledge retrieval",
+    "language model",
+    "llm",
+    "transformer",
+    "dense retrieval",
+    "vector search",
+]
+
+
+# ------------------------------------------------
+# QUERY EXPANSION
+# ------------------------------------------------
+
+def expand_queries(main_query: str, llm: Any) -> List[str]:
+
+    prompt = f"""
+You are an expert academic search assistant.
+
+Generate 4 specific literature search queries for the topic:
+
+{main_query}
+
+Focus on:
+- core methods
+- benchmark papers
+- evaluation techniques
+- limitations
+
+Return only the queries, one per line.
+"""
+
+    resp = llm.invoke(prompt)
+
+    queries = [
+        q.strip("- ").strip()
+        for q in resp.split("\n")
+        if len(q.strip()) > 5
+    ]
+
+    return queries[:4]
+
+
+# ------------------------------------------------
+# TAVILY SEARCH
+# ------------------------------------------------
+
+def tavily_search(query):
+
+    api_key = get_config().retrieval.tavily_api_key
+    client = TavilyClient(api_key=api_key)
+
+    results = client.search(
+        query=query,
+        search_depth="advanced",
+        max_results=5
+    )
+
+    papers = []
+
+    for r in results["results"]:
+
+        papers.append({
+            "title": r["title"],
+            "summary": r["content"],
+            "url": r["url"]
+        })
+
+    return papers
+
+
+# ------------------------------------------------
+# TOPIC FILTER
+# removes irrelevant scientific domains
+# ------------------------------------------------
+
+def is_relevant(paper: Dict) -> bool:
+
+    text = (
+        (paper.get("title") or "") +
+        " " +
+        (paper.get("summary") or "")
+    ).lower()
+
+    return any(keyword in text for keyword in RAG_KEYWORDS)
+
+
+# ------------------------------------------------
+# MAIN SEARCH AGENT
+# ------------------------------------------------
 
 def search_agent(
-    search_queries: list[str],
+    search_queries: List[str],
     main_query: Optional[str] = None,
     end_date: Optional[str] = None,
     top_k: Optional[int] = None,
-) -> list[dict]:
-    """
-    Run search for each query on arXiv and Semantic Scholar with caching and rate-limit safety.
-    Optimized for the DeepScholar Benchmark by focusing on verifiability and nugget coverage.
-    """
+    llm=None
+):
+
     cfg = get_config()
-    r_cfg = cfg.retrieval
-    
-    # Use end_date from config if not provided in the call
-    end_date = end_date or r_cfg.end_date
-    top_k = top_k or r_cfg.top_k_after_rerank
 
-    seen_ids: set[str] = set()
-    all_papers: list[dict] = []
+    expanded = list(search_queries)
 
-    # Limit to a maximum of 4 queries to prevent hitting API rate limits during recursive loops
-    max_queries = 4 
-    
-    for q in search_queries[:max_queries]:
-        # 1. Check Cache first to avoid the 10-second arXiv 429 penalty
+    # Query expansion
+    if len(search_queries) == 1 and llm:
+        expanded += expand_queries(search_queries[0], llm)
+
+    all_papers = []
+    seen = set()
+
+    # -----------------------------------------
+    # Run search queries
+    # -----------------------------------------
+
+    def run_query(q):
+
         if q in _SEARCH_CACHE:
-            batch = _SEARCH_CACHE[q]
-        else:
-            # 2. Fetch fresh results if not cached
-            # search_arxiv now handles the internal 3-second delay and 429 backoff
-            arxiv_papers = search_arxiv(q, max_results=r_cfg.max_arxiv_results, end_date=end_date)
-            ss_papers = search_semantic_scholar(q, max_results=r_cfg.max_semantic_scholar_results)
-            
-            batch = arxiv_papers + ss_papers
-            _SEARCH_CACHE[q] = batch
+            return _SEARCH_CACHE[q]
 
-        # 3. Deduplicate by paper ID or title
+        with concurrent.futures.ThreadPoolExecutor() as ex:
+
+            f1 = ex.submit(search_arxiv, q, 20, end_date)
+            f2 = ex.submit(search_semantic_scholar, q, 20)
+            f3 = ex.submit(tavily_search, q)
+
+            papers = f1.result() + f2.result() + f3.result()
+
+        _SEARCH_CACHE[q] = papers
+
+        return papers
+
+    # -----------------------------------------
+    # Collect results
+    # -----------------------------------------
+
+    for q in expanded[:5]:
+
+        batch = run_query(q)
+
         for p in batch:
-            pid = p.get("id") or p.get("arxiv_id") or p.get("title", "")
-            if pid and pid not in seen_ids:
-                seen_ids.add(pid)
+
+            pid = p.get("id") or p.get("title")
+
+            if pid not in seen:
+
+                seen.add(pid)
                 all_papers.append(p)
 
     if not all_papers:
         return []
 
-    # 4. Rerank results to ensure the Reader and Writer agents receive the highest-quality evidence
-    # This directly improves the verifiability metric for DeepScholar
-    rerank_query = main_query or search_queries[0]
-    return rerank(
+    # -----------------------------------------
+    # FILTER IRRELEVANT PAPERS
+    # -----------------------------------------
+
+    filtered = [p for p in all_papers if is_relevant(p)]
+
+    # fallback if filter removed everything
+    if len(filtered) < 5:
+        filtered = all_papers
+
+    # -----------------------------------------
+    # RERANK
+    # -----------------------------------------
+
+    rerank_query = main_query or expanded[0]
+
+    ranked = rerank(
         rerank_query,
-        all_papers,
+        filtered,
         text_key="summary",
-        top_k=top_k,
-        model_name=cfg.embedding.model_name,
-        device=cfg.embedding.device,
+        top_k=top_k or cfg.retrieval.top_k_after_rerank,
+        model_name="BAAI/bge-reranker-base"
     )
+
+    return ranked
